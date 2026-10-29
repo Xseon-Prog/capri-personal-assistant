@@ -42,6 +42,7 @@ try:
     from ai import AI
     from local_ai import LocalAI
     from router import RequestRouter  # CAPRI_LOCAL_ROUTER_V1
+    from provider_hub import ProviderHub  # CAPRI_PROVIDER_HUB_V1
     from persona import LINES, gendered, line, set_user
     from avatar import Avatar
     import zapret
@@ -57,6 +58,8 @@ DEFAULTS = {
     "enable_ai": False,
     "local_ai": True,
     "local_model": "qwen3:8b",
+    "provider_mode": "local",  # CAPRI_PROVIDER_HUB_V1
+    "provider_usage_logging": True,
     "barge_in": True,
     "mic_device": None,
     "chatter": True,
@@ -274,6 +277,7 @@ class Capri(QObject):
         self.zapret_checked = False  # предлагали ли уже исправить zapret в этом сеансе
         self.actions.local = self.local
         self.router = RequestRouter()  # CAPRI_LOCAL_ROUTER_V1
+        self.provider_hub = ProviderHub(cfg, self.local)  # CAPRI_PROVIDER_HUB_V1
         self.speaker = Speaker(cfg)
         self.jobs = queue.Queue()
         self.awake_until = 0.0
@@ -643,14 +647,21 @@ class Capri(QObject):
         if reply is not None and reply.action in ("mic_info", "mic_next"):
             reply = self.mic_command(reply.action)
         if reply is None:
-            if self.cfg.get("enable_ai") and self.ai.available:
-                # Сохраняется только уже настроенная пользователем интеграция; маршрутизатор её не включает.
-                reply = Reply(self.ai.ask(cmd), "answer")
-            elif decision and decision.needs_search:
+            if decision and decision.needs_search:
                 reply = self.actions.fallback(cmd, force_search=True)
             else:
-                answer = (self.local.ask(cmd, detailed=bool(decision and decision.detailed))
-                          if self.local else None)
+                route_name = decision.route if decision else "local_chat"
+                result = self.provider_hub.ask(
+                    cmd,
+                    detailed=bool(decision and decision.detailed),
+                    route=route_name,
+                )
+                answer = result.text if result else None
+                if result:
+                    log.info(
+                        "Ответ провайдера: %s/%s; input_tokens=%s output_tokens=%s cost_usd=%.8f",
+                        result.provider, result.model, result.input_tokens, result.output_tokens, result.cost_usd,
+                    )
                 if answer:
                     reply = Reply(answer, "answer")
                 else:

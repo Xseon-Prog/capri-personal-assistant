@@ -63,3 +63,5 @@ __pycache__/
 .venv/
 venv/
 
+# Local provider usage statistics (never commit)
+usage.jsonl

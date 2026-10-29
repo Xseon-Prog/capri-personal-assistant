@@ -241,6 +241,7 @@ def normalize_answer_layout(text):
 class LocalAI:
     def __init__(self, cfg):
         self.model = cfg.get("local_model", "qwen3:8b")  # CAPRI_LOCAL_DIALOGUE_V2
+        self.last_usage = None  # CAPRI_PROVIDER_HUB_V1: токены последнего запроса Ollama
         self.history = []
         self.memory = MemoryStore()  # CAPRI_LOCAL_MEMORY_V1
         self.on_model_change = None  # main записывает новую модель в config.json
@@ -301,6 +302,11 @@ class LocalAI:
             "keep_alive": "10m",
             "options": {"num_predict": max_tokens, "num_ctx": 8192, "temperature": 0.55, "repeat_penalty": 1.12},
         }, 120)
+        self.last_usage = {  # CAPRI_PROVIDER_HUB_V1
+            "model": str(resp.get("model") or self.model),
+            "input_tokens": resp.get("prompt_eval_count"),
+            "output_tokens": resp.get("eval_count"),
+        }
         text = strip_reasoning(resp.get("message", {}).get("content", ""))
         if REASONING.search(text):
             # модель всё равно «думает» вслух — переспрашиваем, а если опять, ответа нет
@@ -312,6 +318,7 @@ class LocalAI:
 
     def ask(self, question, detailed=False):  # CAPRI_LOCAL_ROUTER_V1
         """Текст ответа или None, если лучше открыть поиск."""
+        self.last_usage = None  # CAPRI_PROVIDER_HUB_V1: не использовать счётчики прошлого запроса
         if FRESH.search(question.lower()):
             return None
         now = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")

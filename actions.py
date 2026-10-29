@@ -1691,7 +1691,7 @@ class Actions:
             callback(path, report)
         else:
             os.startfile(path)
-        use_ai = self.cfg.get("enable_ai") and self.ai and self.ai.available
+        use_ai = False  # CAPRI_PROVIDER_HUB_V1: облачные вызовы отложены до отдельного этапа
         spoken = self.ai.summarize_report(report) if use_ai else None
         if not spoken and self.local:
             spoken = self.local.summarize_report(report)
