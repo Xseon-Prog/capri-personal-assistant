@@ -1,0 +1,65 @@
+# личные настройки (создаются при первом запуске из настроек по умолчанию в main.py)
+config.json
+
+# скачиваемая модель распознавания речи — ставится через setup.bat
+models/
+
+# журнал, отчёты диагностики, образцы голоса — личные данные
+capri.log
+reports/
+samples/
+
+# служебное
+__pycache__/
+*.pyc
+*.tmp
+
+# Local settings and secrets
+config.json
+config.json.*
+.env
+.env.*
+
+# Personal logs and data
+*.log
+reports/
+samples/
+*.sqlite
+*.sqlite3
+*.db
+memory.sqlite*
+
+# Models, caches and virtual environments
+models/
+__pycache__/
+*.py[cod]
+*.tmp
+.venv/
+venv/
+
+# Local backups created during development
+backup_*/
+backup_*.py
+backups/
+
+
+# Local user data and development backups
+backup_*/
+backups/
+config.json
+config.json.*
+.env
+.env.*
+*.log
+reports/
+samples/
+*.sqlite
+*.sqlite3
+*.db
+memory.sqlite*
+models/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
