@@ -268,6 +268,7 @@ class Capri(QObject):
     full_answer = Signal(str)  # CAPRI_LONG_ANSWER_UI_V1
     choice_requested = Signal(object)  # CAPRI_CYBERPUNK_UI_V6
     report_requested = Signal(str, str)  # CAPRI_CYBERPUNK_UI_V6
+    voice_control_requested = Signal(object)  # CAPRI_VOICE_SETTINGS_COMMANDS_V1
 
     def __init__(self, cfg):
         super().__init__()
@@ -644,7 +645,14 @@ class Capri(QObject):
         self.subtitle.emit("> " + cmd)
         self.reload_config_if_changed()
 
-        reply = self.actions.handle(cmd)
+        # CAPRI_VOICE_SETTINGS_COMMANDS_V1: settings and radio controls are local rules, not LLM prompts.
+        from voice_controls import parse_voice_control
+        voice_control = parse_voice_control(cmd)
+        if voice_control is not None:
+            self.voice_control_requested.emit(voice_control)
+            reply = Reply(voice_control["reply"], "voice_control")
+        else:
+            reply = self.actions.handle(cmd)
         decision = None
         if reply is not None:
             log.info("Маршрут запроса: windows_tool — команда обработана существующим исполнителем")
@@ -777,8 +785,29 @@ def tray_icon():
     return QIcon(pm)
 
 
+def _set_windows_app_user_model_id():
+    """Задаёт отдельную идентичность Капри для группировки значка на панели задач Windows."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        set_app_id = shell32.SetCurrentProcessExplicitAppUserModelID
+        set_app_id.argtypes = [ctypes.c_wchar_p]
+        set_app_id.restype = ctypes.c_long
+        result = set_app_id("XseonProg.Capri.PersonalAssistant")
+        if result != 0:
+            log.warning("SetCurrentProcessExplicitAppUserModelID завершилась с HRESULT 0x%08X", result & 0xFFFFFFFF)
+    except Exception:
+        log.exception("Не удалось задать Windows AppUserModelID для Капри")
+
+
 def main():
+    _set_windows_app_user_model_id()  # CAPRI_WINDOWS_TASKBAR_ID_V1_9: before QApplication
     app = QApplication(sys.argv)
+    app.setApplicationName("Capri")
+    app.setApplicationDisplayName("Capri")
+    app.setWindowIcon(tray_icon())  # same icon as Capri's system tray
     app.setQuitOnLastWindowClosed(False)
     cfg = load_config()
 
@@ -851,6 +880,50 @@ def main():
         from profile_dialog import ProfileDialog
         show_window("profile", lambda: ProfileDialog(capri))
 
+    radio_window = None
+
+    def open_radio():
+        nonlocal radio_window
+        if radio_window is None:
+            try:
+                from radio_player import NightCityRadioWindow  # CAPRI_NIGHT_CITY_RADIO_V1_1
+
+                def save_radio_volume(value):
+                    capri.cfg["radio_volume"] = int(value)
+                    save_setting("radio_volume", int(value))
+
+                radio_window = NightCityRadioWindow(
+                    volume=int(capri.cfg.get("radio_volume", 70)),
+                    volume_changed=save_radio_volume,
+                    video_path=os.path.join(BASE, "media", "night_city_radio.mp4"),
+                    window_icon=tray_icon(),  # CAPRI_RADIO_REUSE_APP_ICON_V1_8
+                )
+            except Exception as exc:
+                log.exception("Не удалось открыть Радио Найт-Сити")
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(None, "Радио Найт-Сити", f"Не удалось запустить плеер:\n{exc}")
+                return
+        radio_window.show()
+        radio_window.raise_()
+        radio_window.activateWindow()
+
+    # CAPRI_VOICE_SETTINGS_COMMANDS_V1: QObject slot ensures UI/settings actions run on the Qt main thread.
+    from voice_control_bridge import VoiceControlBridge
+    voice_control_bridge = VoiceControlBridge(
+        capri=capri,
+        avatar=avatar,
+        save_setting=save_setting,
+        open_radio=open_radio,
+        get_radio=lambda: radio_window,
+        open_entries=open_entries,
+        open_sound=open_sound,
+        open_profile=open_profile,
+        open_config=lambda: os.startfile(CONFIG_PATH),
+        open_github=lambda: capri.actions.web(CAPRI_URL),
+        mic_devices=input_devices,
+    )
+    capri.voice_control_requested.connect(voice_control_bridge.execute)
+
     menu = QMenu()
     # CAPRI_MENU_PIN_V8
     menu.setStyleSheet("""
@@ -907,6 +980,7 @@ def main():
                       ("Как ко мне обращаться…", open_profile),
                       ("Проверить ПК", lambda: capri.text_command("проверь компьютер")),
                       ("Спрятать", avatar.vanish),
+                      ("Радио Найт-Сити", open_radio),
                       ("MIC", None),
                       ("SETTINGS", None),
                       (None, None),

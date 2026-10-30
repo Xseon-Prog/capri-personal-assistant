@@ -1011,7 +1011,12 @@ class Avatar(QWidget):
 
     def _hud(self, p, glitch):
         # на прогулке окно с текстом сверху, фигура под ним
-        top = 6 if self.roaming else FIG_H + 6
+        if self.roaming:
+            top = 6
+        elif self.mode == "standby":
+            top = FIG_H - 120  # CAPRI_STANDBY_HUD_POSITION_V1_1
+        else:
+            top = FIG_H + 6
         bottom = top + (H - FIG_H) - 12
         panel = QPolygonF([QPointF(6, top), QPointF(W - 22, top), QPointF(W - 6, top + 16),
                            QPointF(W - 6, bottom), QPointF(22, bottom), QPointF(6, bottom - 16)])
