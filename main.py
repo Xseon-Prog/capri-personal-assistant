@@ -34,7 +34,7 @@ def fatal(text):
 
 try:
     from PySide6.QtCore import QObject, Qt, Signal
-    from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QMenu, QSlider,
                                    QSystemTrayIcon, QWidget, QWidgetAction)
 
@@ -71,6 +71,8 @@ DEFAULTS = {
     "show_message_hud": True,  # CAPRI_MESSAGE_HUD_SETTINGS_V1
     "avatar_scale": 1.0,  # CAPRI_AVATAR_SCALE_V2
     "answer_message_seconds": 30,  # CAPRI_AVATAR_SCALE_V2
+    "standby_after_seconds": 20,  # CAPRI_STANDBY_MODE_V1: 20 / 40 / 60 / 0 (never)
+    "manual_standby_enabled": False,  # CAPRI_MANUAL_STANDBY_V1
     "voice_volume": 100,     # громкость голоса Капри 0..100 (общая громкость Windows не меняется)
     "mic_gain": 1.0,         # громкость микрофона для Капри: 1 — как есть, 2 — вдвое громче
     "mic_sensitivity": 100,  # 100 — слышит всё; меньше — тихий шум и фон отбрасываются
@@ -257,6 +259,7 @@ class Capri(QObject):
     mode = Signal(str, float)
     subtitle = Signal(str)
     answer_subtitle = Signal(str)  # CAPRI_AVATAR_SCALE_V2
+    activity = Signal()  # CAPRI_STANDBY_MODE_V1
     quit_app = Signal()
     anim = Signal(str)
     roam = Signal()
@@ -602,6 +605,7 @@ class Capri(QObject):
                 self.mode.emit("idle", 0.0)
             return
         self.last_activity = time.time()
+        self.activity.emit()  # CAPRI_STANDBY_MODE_V1: voice/text interaction resets the idle timer
         if kind == "say":
             self.summon.emit()
             if len(job) > 2:
@@ -784,6 +788,7 @@ def main():
     avatar.show_message_hud = bool(cfg.get("show_message_hud", True))  # CAPRI_MESSAGE_HUD_SETTINGS_V1
     avatar.set_scale(float(cfg.get("avatar_scale", 1.0)))  # CAPRI_AVATAR_SCALE_V2
     avatar.answer_message_seconds = max(15.0, min(90.0, float(cfg.get("answer_message_seconds", 30))))
+    avatar.set_standby_after(int(cfg.get("standby_after_seconds", 20)))  # CAPRI_STANDBY_MODE_V1
     apply_user(cfg)
     capri = Capri(cfg)
     # CAPRI_LONG_ANSWER_UI_V1: display full text in a scrollable window.
@@ -803,14 +808,18 @@ def main():
     capri.mode.connect(avatar.set_mode)
     capri.subtitle.connect(avatar.set_subtitle)
     capri.answer_subtitle.connect(avatar.set_answer_subtitle)  # CAPRI_AVATAR_SCALE_V2
+    capri.activity.connect(avatar.mark_activity)  # CAPRI_STANDBY_MODE_V1
     capri.quit_app.connect(app.quit)
     capri.anim.connect(avatar.play_anim)
     capri.roam.connect(avatar.start_roam)
     capri.hop.connect(avatar.start_hopping)
     capri.move_to.connect(avatar.move_to_named)
     avatar.clicked.connect(capri.call_from_click)
-    if avatar.stay_visible:
+    manual_standby_enabled = bool(cfg.get("manual_standby_enabled", False))
+    if avatar.stay_visible or manual_standby_enabled:
         avatar.summon()
+    if manual_standby_enabled:
+        avatar.set_manual_standby(True)
 
     def ask_text():
         from capri_ui import CommandInputDialog  # CAPRI_CYBERPUNK_UI_V6
@@ -931,6 +940,42 @@ def main():
             entries_act.triggered.connect(open_entries)
             settings_menu.addAction(entries_act)
 
+            manual_standby_act = QAction("Включить режим ожидания", settings_menu)
+            manual_standby_act.setCheckable(True)
+            manual_standby_act.setChecked(bool(capri.cfg.get("manual_standby_enabled", False)))
+
+            def set_manual_standby(checked):
+                enabled = bool(checked)
+                capri.cfg["manual_standby_enabled"] = enabled
+                save_setting("manual_standby_enabled", enabled)
+                avatar.set_manual_standby(enabled)
+                log.info("Постоянный режим ожидания: %s", "включён" if enabled else "выключен")
+
+            manual_standby_act.toggled.connect(set_manual_standby)
+            settings_menu.addAction(manual_standby_act)
+
+            standby_menu = settings_menu.addMenu("Настройка режима ожидания")
+            standby_group = QActionGroup(standby_menu)
+            standby_group.setExclusive(True)
+            standby_actions = {}
+
+            def set_standby_after(seconds):
+                seconds = int(seconds)
+                capri.cfg["standby_after_seconds"] = seconds
+                save_setting("standby_after_seconds", seconds)
+                avatar.set_standby_after(seconds)
+
+            for seconds, label in ((20, "20 секунд"), (40, "40 секунд"),
+                                   (60, "1 минута"), (0, "Никогда")):
+                standby_action = QAction(label, standby_group)
+                standby_action.setCheckable(True)
+                standby_action.triggered.connect(
+                    lambda _checked=False, value=seconds: set_standby_after(value)
+                )
+                standby_group.addAction(standby_action)
+                standby_menu.addAction(standby_action)
+                standby_actions[seconds] = standby_action
+
             hud_act = QAction("Показывать сообщения Капри", settings_menu)
             hud_act.setCheckable(True)
             hud_act.setChecked(bool(capri.cfg.get("show_message_hud", True)))
@@ -941,7 +986,7 @@ def main():
                 save_setting("show_message_hud", enabled)
                 avatar.show_message_hud = enabled
                 if enabled and avatar.subtitle:
-                    avatar.message_hud_until = time.time() + 15.0
+                    avatar.message_hud_until = time.time() + 8.0  # CAPRI_STANDBY_MODE_V1
                 else:
                     avatar.message_hud_until = 0.0
                 avatar.render()
@@ -984,6 +1029,15 @@ def main():
                 ):
                     action.blockSignals(True)
                     action.setChecked(bool(capri.cfg.get(key, default)))
+                    action.blockSignals(False)
+                manual_standby_act.blockSignals(True)
+                manual_standby_act.setChecked(bool(capri.cfg.get("manual_standby_enabled", False)))
+                manual_standby_act.blockSignals(False)
+                selected_standby = int(capri.cfg.get("standby_after_seconds", 20))
+                selected_action = standby_actions.get(selected_standby, standby_actions[20])
+                for value, action in standby_actions.items():
+                    action.blockSignals(True)
+                    action.setChecked(action is selected_action)
                     action.blockSignals(False)
                 avatar.render()
                 avatar.update()

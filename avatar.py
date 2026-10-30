@@ -1,5 +1,6 @@
 """Окно-аватар Капри: прозрачное, поверх всех окон, с глитч-эффектами,
 вспышками и «лагами» при появлении, речи и исчезновении."""
+import ctypes
 import math
 import os
 import random
@@ -48,6 +49,7 @@ CM = QPainter.CompositionMode
 
 STATUS_TEXT = {
     "idle": "ОНЛАЙН",
+    "standby": "ОЖИДАНИЕ",  # CAPRI_STANDBY_MODE_V1
     "listening": "СЛУШАЮ",
     "thinking": "ОБРАБОТКА",
     "speaking": "ПЕРЕДАЧА",
@@ -480,7 +482,12 @@ class Avatar(QWidget):
         self.stay_visible = False  # CAPRI_MENU_PIN_V8
         self.show_message_hud = True  # CAPRI_MESSAGE_HUD_SETTINGS_V1
         self.message_hud_until = 0.0
-        self.subtitle_duration = 15.0  # CAPRI_AVATAR_SCALE_V2
+        self.subtitle_duration = 8.0  # CAPRI_STANDBY_MODE_V1: ordinary HUD message duration
+        self.standby_after_seconds = 20
+        self.standby_active = False
+        self.manual_standby_enabled = False  # CAPRI_MANUAL_STANDBY_V1
+        self.last_activity_monotonic = time.monotonic()
+        self.last_standby_poll = 0.0
         self.subtitle = ""
         self.k = 0                   # кадров в текущей фазе
         self.t = 0
@@ -637,14 +644,27 @@ class Avatar(QWidget):
         self.raise_()
 
     def vanish(self):
+        if self.manual_standby_enabled:  # CAPRI_MANUAL_STANDBY_V1: only the Settings toggle turns it off
+            self._enforce_manual_standby()
+            return
+        self.standby_active = False
+        if self.anim == "standby":
+            self.anim = None
         if self.state in ("visible", "appearing"):
             self.state, self.k = "vanishing", 0
 
     def play_anim(self, name, loop=False):
+        if self.manual_standby_enabled and name != "standby":  # CAPRI_MANUAL_STANDBY_V1
+            return
         if name in self.anims:
             self.anim, self.anim_start, self.anim_loop = name, time.time(), loop
 
     def set_mode(self, mode, seconds=0.0):
+        if self.manual_standby_enabled:  # CAPRI_MANUAL_STANDBY_V1: ignore transient modes while latched
+            self._enforce_manual_standby()
+            return
+        if self.standby_active and mode != "standby":  # CAPRI_STANDBY_HOLD_V1_1
+            self._leave_standby()
         if mode == "thinking" and self.mode != "thinking":
             self.play_anim("eyes", loop=True)
         elif mode != "thinking" and self.anim == "eyes":
@@ -653,17 +673,21 @@ class Avatar(QWidget):
             self.hopping = False
         self.mode = mode
         self.mode_until = time.time() + seconds if seconds > 0 else 0
-        if mode == "idle" and not self.stay_visible:
-            hide_deadline = time.time() + self.hide_after
-            if self.show_message_hud and self.message_hud_until:
-                hide_deadline = max(hide_deadline, self.message_hud_until)
-            self.hide_at = hide_deadline
+        if mode in ("idle", "standby") and not self.stay_visible:
+            if mode == "standby" or self.standby_after_seconds > 0:
+                # Standby remains visible until direct interaction with Capri.
+                self.hide_at = 0.0
+            else:
+                hide_deadline = time.time() + self.hide_after
+                if self.show_message_hud and self.message_hud_until:
+                    hide_deadline = max(hide_deadline, self.message_hud_until)
+                self.hide_at = hide_deadline
         else:
             self.hide_at = 0.0
         self.burst, self.burst_level = random.randint(3, 6), random.uniform(.4, .9)
 
     def set_subtitle(self, text):
-        self._set_subtitle(text, 15.0)
+        self._set_subtitle(text, 8.0)  # CAPRI_STANDBY_MODE_V1
 
     def set_answer_subtitle(self, text):
         self._set_subtitle(text, self.answer_message_seconds)
@@ -683,6 +707,98 @@ class Avatar(QWidget):
                           max(1, round(H * self.scale_factor)))
         self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
         self.update()
+
+    def _enforce_manual_standby(self):
+        """Keep the looping standby animation active until the Settings toggle is switched off."""
+        if self.state == "hidden":
+            self.summon()
+        self.standby_active = True
+        self.mode = "standby"
+        self.mode_until = 0.0
+        self.hide_at = 0.0
+        self.hopping = False
+        if self.anim != "standby":
+            self.anim = None
+            self.play_anim("standby", loop=True)
+        self.update()
+
+    def set_manual_standby(self, enabled):
+        """Enable/disable persistent standby; while enabled it survives voice/text requests."""
+        enabled = bool(enabled)
+        self.manual_standby_enabled = enabled
+        if enabled:
+            self._enforce_manual_standby()
+            return
+        self.standby_active = False
+        if self.anim == "standby":
+            self.anim = None
+        self.last_activity_monotonic = time.monotonic()
+        self.last_standby_poll = 0.0
+        self.set_mode("idle", 0.0)
+
+    def set_standby_after(self, seconds):
+        """0 disables standby; supported values are 20, 40 and 60 seconds."""
+        self.standby_after_seconds = max(0, int(seconds))
+        if self.standby_after_seconds == 0:
+            self._leave_standby()
+            if self.state == "visible" and self.mode == "idle" and not self.stay_visible:
+                self.hide_at = time.time() + self.hide_after
+        elif self.state == "visible" and self.mode == "idle":
+            self.hide_at = 0.0
+
+    def mark_activity(self):
+        """Reset the idle timer; a manually latched standby remains active."""
+        self.last_activity_monotonic = time.monotonic()
+        if self.manual_standby_enabled:  # CAPRI_MANUAL_STANDBY_V1
+            self._enforce_manual_standby()
+            return
+        if self.standby_active:
+            self._leave_standby()
+
+    def _system_idle_seconds(self):
+        """Read Windows keyboard/mouse idle time; fall back to the app activity timer."""
+        try:
+            class _LastInputInfo(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+            info = _LastInputInfo()
+            info.cbSize = ctypes.sizeof(_LastInputInfo)
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+                raise OSError("GetLastInputInfo failed")
+            tick = int(ctypes.windll.kernel32.GetTickCount()) & 0xFFFFFFFF
+            return ((tick - int(info.dwTime)) & 0xFFFFFFFF) / 1000.0
+        except Exception:
+            return max(0.0, time.monotonic() - self.last_activity_monotonic)
+
+    def _leave_standby(self):
+        if not self.standby_active:
+            return
+        self.standby_active = False
+        if self.anim == "standby":
+            self.anim = None
+        self.set_mode("idle", 0.0)
+        self.update()
+
+    def _update_standby(self, now):
+        if self.manual_standby_enabled:  # CAPRI_MANUAL_STANDBY_V1
+            self._enforce_manual_standby()
+            return
+        if now - self.last_standby_poll < 0.5:
+            return
+        self.last_standby_poll = now
+        if (self.standby_after_seconds <= 0 or self.state != "visible"
+                or self.roaming or self.mode not in ("idle", "standby")):
+            return
+        system_idle = self._system_idle_seconds()
+        app_idle = max(0.0, time.monotonic() - self.last_activity_monotonic)
+        idle_seconds = min(system_idle, app_idle)
+        if self.standby_active:  # CAPRI_STANDBY_HOLD_V1_1: stay until direct Capri interaction
+            return
+        if self.mode == "idle" and idle_seconds >= self.standby_after_seconds:
+            self.standby_active = True
+            self.anim = None
+            self.play_anim("standby", loop=True)
+            self.set_mode("standby", 0.0)
 
     # ---------- анимация ----------
     def tick(self):
@@ -707,6 +823,7 @@ class Avatar(QWidget):
             return
         if self.mode_until and now > self.mode_until:
             self.set_mode("idle")
+        self._update_standby(now)  # CAPRI_STANDBY_MODE_V1
         if self.roaming:
             self._roam_step(now)
         elif self._tele_step(now):
