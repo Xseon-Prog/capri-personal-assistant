@@ -418,6 +418,7 @@ class Avatar(QWidget):
                          | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.scale_factor = 1.0  # CAPRI_AVATAR_SCALE_V2
         self.setFixedSize(W, H)
         global DPR
         DPR = max([s.devicePixelRatio() for s in QGuiApplication.screens()] or [1.0])
@@ -477,6 +478,9 @@ class Avatar(QWidget):
         self.hide_at = 0.0
         self.hide_after = 12.0
         self.stay_visible = False  # CAPRI_MENU_PIN_V8
+        self.show_message_hud = True  # CAPRI_MESSAGE_HUD_SETTINGS_V1
+        self.message_hud_until = 0.0
+        self.subtitle_duration = 15.0  # CAPRI_AVATAR_SCALE_V2
         self.subtitle = ""
         self.k = 0                   # кадров в текущей фазе
         self.t = 0
@@ -500,10 +504,10 @@ class Avatar(QWidget):
         geo = QGuiApplication.primaryScreen().availableGeometry()
         self.home_pos = self.pos() if self.user_moved else None
         self.roam_dir = random.choice((-1, 1))
-        self.roam_x = geo.right() - W if self.roam_dir < 0 else geo.left()
+        self.roam_x = geo.right() - self.width() if self.roam_dir < 0 else geo.left()
         self.roam_last = time.time()
         self.roaming = True
-        self.move(int(self.roam_x), geo.bottom() - H)
+        self.move(int(self.roam_x), geo.bottom() - self.height())
         self.state, self.k = "appearing", 0
         self.hide_at = 0
         self.show()
@@ -527,14 +531,14 @@ class Avatar(QWidget):
         if random.random() < 0.012:  # глитч-рывок вперёд
             self.roam_x += self.roam_dir * random.randint(30, 80)
             self.burst, self.burst_level = random.randint(3, 6), random.uniform(.6, 1.0)
-        lo, hi = geo.left() - 40, geo.right() - W + 40
+        lo, hi = geo.left() - 40, geo.right() - self.width() + 40
         if not lo <= self.roam_x <= hi:
             if self.mode in ("thinking", "speaking"):
                 self.roam_x = max(lo, min(hi, self.roam_x))  # договорит у края, потом уйдёт
             else:
                 self.vanish()
         bob = 4 * math.sin(now * 3)
-        self.move(int(self.roam_x), int(geo.bottom() - H + bob))
+        self.move(int(self.roam_x), int(geo.bottom() - self.height() + bob))
 
     # ---------- телепорт молнией ----------
     def teleport(self, target):
@@ -545,18 +549,18 @@ class Avatar(QWidget):
         """Переместиться по команде («в левый нижний угол», «в центр», «в другую сторону») молнией."""
         geo = QGuiApplication.primaryScreen().availableGeometry()
         m = 24
-        xs = {"left": geo.left() + m, "right": geo.right() - W - m, "": self.x()}
-        ys = {"top": geo.top() + m, "bottom": geo.bottom() - H - m, "": self.y()}
+        xs = {"left": geo.left() + m, "right": geo.right() - self.width() - m, "": self.x()}
+        ys = {"top": geo.top() + m, "bottom": geo.bottom() - self.height() - m, "": self.y()}
         if where == "center":
-            target = QPoint(geo.center().x() - W // 2, geo.center().y() - H // 2)
+            target = QPoint(geo.center().x() - self.width() // 2, geo.center().y() - self.height() // 2)
         elif where == "other":  # зеркально через центр экрана
-            target = QPoint(geo.left() + geo.right() - W - self.x(), self.y())
+            target = QPoint(geo.left() + geo.right() - self.width() - self.x(), self.y())
         else:
             v, _, h = where.partition("-") if "-" in where else (
                 (where, "", "") if where in ("top", "bottom") else ("", "", where))
             target = QPoint(xs.get(h, self.x()), ys.get(v, self.y()))
-        target.setX(max(geo.left(), min(geo.right() - W, target.x())))
-        target.setY(max(geo.top(), min(geo.bottom() - H, target.y())))
+        target.setX(max(geo.left(), min(geo.right() - self.width(), target.x())))
+        target.setY(max(geo.top(), min(geo.bottom() - self.height(), target.y())))
         self.hopping, self.hop_home = False, None
         if self.state == "visible" and not self.roaming:
             self.teleport(target)
@@ -576,7 +580,8 @@ class Avatar(QWidget):
         geo = QGuiApplication.primaryScreen().availableGeometry()
         spot = self.pos()
         for _ in range(12):
-            spot = QPoint(random.randint(geo.left(), geo.right() - W), random.randint(geo.top(), geo.bottom() - H))
+            spot = QPoint(random.randint(geo.left(), geo.right() - self.width()),
+                           random.randint(geo.top(), geo.bottom() - self.height()))
             if math.hypot(spot.x() - self.x(), spot.y() - self.y()) > 350:
                 break
         return spot
@@ -648,12 +653,36 @@ class Avatar(QWidget):
             self.hopping = False
         self.mode = mode
         self.mode_until = time.time() + seconds if seconds > 0 else 0
-        self.hide_at = (time.time() + self.hide_after
-                        if mode == "idle" and not self.stay_visible else 0)  # CAPRI_MENU_PIN_V8
+        if mode == "idle" and not self.stay_visible:
+            hide_deadline = time.time() + self.hide_after
+            if self.show_message_hud and self.message_hud_until:
+                hide_deadline = max(hide_deadline, self.message_hud_until)
+            self.hide_at = hide_deadline
+        else:
+            self.hide_at = 0.0
         self.burst, self.burst_level = random.randint(3, 6), random.uniform(.4, .9)
 
     def set_subtitle(self, text):
+        self._set_subtitle(text, 15.0)
+
+    def set_answer_subtitle(self, text):
+        self._set_subtitle(text, self.answer_message_seconds)
+
+    def _set_subtitle(self, text, seconds):
         self.subtitle = text or ""
+        self.subtitle_duration = max(1.0, float(seconds))
+        self.message_hud_until = (time.time() + self.subtitle_duration
+                                  if self.show_message_hud and self.subtitle else 0.0)
+        self.update()
+
+    def set_scale(self, scale):
+        """Resize the avatar window while preserving its original drawing canvas."""
+        center = self.geometry().center()
+        self.scale_factor = max(0.50, min(1.0, float(scale)))
+        self.setFixedSize(max(1, round(W * self.scale_factor)),
+                          max(1, round(H * self.scale_factor)))
+        self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
+        self.update()
 
     # ---------- анимация ----------
     def tick(self):
@@ -852,7 +881,9 @@ class Avatar(QWidget):
         p.setCompositionMode(CM.CompositionMode_SourceOver)
 
         p.resetTransform()
-        self._hud(p, glitch)
+        if (self.show_message_hud and self.subtitle
+                and self.message_hud_until and time.time() < self.message_hud_until):
+            self._hud(p, glitch)
         p.end()
 
     def _crt_line(self, p, width, height):
@@ -915,7 +946,7 @@ class Avatar(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setCompositionMode(CM.CompositionMode_Source)
-        p.drawImage(0, 0, self.frame)
+        p.drawImage(self.rect(), self.frame)  # CAPRI_AVATAR_SCALE_V2
         p.end()
 
     # ---------- мышь: клик — позвать, тащить — переместить, ПКМ — меню ----------

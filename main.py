@@ -68,6 +68,9 @@ DEFAULTS = {
     "roam_chance": 0.5,
     "teleport_on_answer": True,
     "search_when_unsure": True,
+    "show_message_hud": True,  # CAPRI_MESSAGE_HUD_SETTINGS_V1
+    "avatar_scale": 1.0,  # CAPRI_AVATAR_SCALE_V2
+    "answer_message_seconds": 30,  # CAPRI_AVATAR_SCALE_V2
     "voice_volume": 100,     # громкость голоса Капри 0..100 (общая громкость Windows не меняется)
     "mic_gain": 1.0,         # громкость микрофона для Капри: 1 — как есть, 2 — вдвое громче
     "mic_sensitivity": 100,  # 100 — слышит всё; меньше — тихий шум и фон отбрасываются
@@ -253,6 +256,7 @@ class Capri(QObject):
     vanish = Signal()
     mode = Signal(str, float)
     subtitle = Signal(str)
+    answer_subtitle = Signal(str)  # CAPRI_AVATAR_SCALE_V2
     quit_app = Signal()
     anim = Signal(str)
     roam = Signal()
@@ -681,7 +685,7 @@ class Capri(QObject):
             time.sleep(0.8)
             self.roam.emit()
             time.sleep(1.5)
-        if self.say(reply.text):
+        if self.say(reply.text, answer=(reply.action == "answer")):
             return  # перебили — уже слушаем новую команду
 
         # ask with a populated choice list means matches are ambiguous.
@@ -697,10 +701,13 @@ class Capri(QObject):
             self.awake_until = time.time() + follow
             self.mode.emit("listening", follow)
 
-    def say(self, text):
-        """Озвучивает текст. Возвращает True, если Капри перебили."""
+    def say(self, text, answer=False):
+        """Озвучивает текст. Ответы на вопросы остаются в HUD дольше обычных статусов."""
         log.info("Капри: %s", text)
-        self.subtitle.emit(text)
+        if answer:
+            self.answer_subtitle.emit(text)
+        else:
+            self.subtitle.emit(text)
         self.mode.emit("speaking", 0.0)
         barge_in = self.cfg.get("barge_in") and self.listener
         if self.listener and not barge_in:
@@ -774,6 +781,9 @@ def main():
     avatar = Avatar(os.path.join(BASE, "assets"))
     avatar.hide_after = float(cfg["hide_after_seconds"])
     avatar.stay_visible = bool(cfg.get("pin_on_desktop", False))  # CAPRI_MENU_PIN_V8
+    avatar.show_message_hud = bool(cfg.get("show_message_hud", True))  # CAPRI_MESSAGE_HUD_SETTINGS_V1
+    avatar.set_scale(float(cfg.get("avatar_scale", 1.0)))  # CAPRI_AVATAR_SCALE_V2
+    avatar.answer_message_seconds = max(15.0, min(90.0, float(cfg.get("answer_message_seconds", 30))))
     apply_user(cfg)
     capri = Capri(cfg)
     # CAPRI_LONG_ANSWER_UI_V1: display full text in a scrollable window.
@@ -792,6 +802,7 @@ def main():
     capri.vanish.connect(avatar.vanish)
     capri.mode.connect(avatar.set_mode)
     capri.subtitle.connect(avatar.set_subtitle)
+    capri.answer_subtitle.connect(avatar.set_answer_subtitle)  # CAPRI_AVATAR_SCALE_V2
     capri.quit_app.connect(app.quit)
     capri.anim.connect(avatar.play_anim)
     capri.roam.connect(avatar.start_roam)
@@ -884,22 +895,20 @@ def main():
     for title, fn in (("Позвать Капри", capri.call_from_click),
                       ("Замолчать", capri.interrupt),
                       ("Написать команду…", ask_text),
-                      ("Мои сайты, программы и ответы…", open_entries),
                       ("Как ко мне обращаться…", open_profile),
                       ("Проверить ПК", lambda: capri.text_command("проверь компьютер")),
                       ("Спрятать", avatar.vanish),
-                      ("PIN", None),
                       ("MIC", None),
-                      ("SEARCH", None),
-                      ("Открыть config.json", lambda: os.startfile(CONFIG_PATH)),
-                      ("Капри на GitHub (обновления)…", lambda: capri.actions.web(CAPRI_URL)),
+                      ("SETTINGS", None),
                       (None, None),
                       ("Выход", app.quit)):
         if title is None:
             menu.addSeparator()
             continue
-        if title == "PIN":
-            pin_act = QAction("Оставаться на рабочем столе", menu)
+        if title == "SETTINGS":
+            settings_menu = menu.addMenu("Настройки")
+
+            pin_act = QAction("Оставаться на рабочем столе", settings_menu)
             pin_act.setCheckable(True)
             pin_act.setChecked(bool(capri.cfg.get("pin_on_desktop", False)))
 
@@ -915,8 +924,71 @@ def main():
                     avatar.hide_at = time.time() + avatar.hide_after
 
             pin_act.toggled.connect(set_pinned)
-            menu.addAction(pin_act)
-            menu.addSeparator()
+            settings_menu.addAction(pin_act)
+            settings_menu.addSeparator()
+
+            entries_act = QAction("Мои сайты, программы и ответы…", settings_menu)
+            entries_act.triggered.connect(open_entries)
+            settings_menu.addAction(entries_act)
+
+            hud_act = QAction("Показывать сообщения Капри", settings_menu)
+            hud_act.setCheckable(True)
+            hud_act.setChecked(bool(capri.cfg.get("show_message_hud", True)))
+
+            def set_message_hud(checked):
+                enabled = bool(checked)
+                capri.cfg["show_message_hud"] = enabled
+                save_setting("show_message_hud", enabled)
+                avatar.show_message_hud = enabled
+                if enabled and avatar.subtitle:
+                    avatar.message_hud_until = time.time() + 15.0
+                else:
+                    avatar.message_hud_until = 0.0
+                avatar.render()
+                avatar.update()
+
+            hud_act.toggled.connect(set_message_hud)
+            settings_menu.addAction(hud_act)
+
+            search_act = QAction("Искать в браузере, если не знаю", settings_menu)
+            search_act.setCheckable(True)
+            search_act.setChecked(bool(capri.cfg.get("search_when_unsure", True)))
+            search_act.toggled.connect(capri.set_search_when_unsure)
+            settings_menu.addAction(search_act)
+
+            chatter_act = QAction("Появляться самой", settings_menu)
+            chatter_act.setCheckable(True)
+            chatter_act.setChecked(bool(capri.cfg.get("chatter", True)))
+            chatter_act.toggled.connect(capri.set_chatter)
+            settings_menu.addAction(chatter_act)
+            settings_menu.addSeparator()
+
+            config_act = QAction("Открыть config.json", settings_menu)
+            config_act.triggered.connect(lambda: os.startfile(CONFIG_PATH))
+            settings_menu.addAction(config_act)
+
+            github_act = QAction("Капри на GitHub (обновления)…", settings_menu)
+            github_act.triggered.connect(lambda: capri.actions.web(CAPRI_URL))
+            settings_menu.addAction(github_act)
+
+            def sync_settings():
+                capri.reload_config_if_changed(speak=False)
+                avatar.show_message_hud = bool(capri.cfg.get("show_message_hud", True))
+                if not avatar.show_message_hud:
+                    avatar.message_hud_until = 0.0
+                for action, key, default in (
+                    (pin_act, "pin_on_desktop", False),
+                    (hud_act, "show_message_hud", True),
+                    (search_act, "search_when_unsure", True),
+                    (chatter_act, "chatter", True),
+                ):
+                    action.blockSignals(True)
+                    action.setChecked(bool(capri.cfg.get(key, default)))
+                    action.blockSignals(False)
+                avatar.render()
+                avatar.update()
+
+            settings_menu.aboutToShow.connect(sync_settings)
             continue
         if title == "MIC":
             mic_menu = menu.addMenu("Микрофон")
@@ -967,39 +1039,42 @@ def main():
                 s.blockSignals(False)
                 lbl.setText(f"{s.value()}%")
             vol_menu.aboutToShow.connect(sync_volume)
-            continue
-        if title == "SEARCH":
-            # галочка: открывать ли Google, когда Капри не знает ответа (search_when_unsure)
-            search_act = QAction("Искать в браузере, если не знаю", menu)
-            search_act.setCheckable(True)
-            search_act.toggled.connect(capri.set_search_when_unsure)
-            menu.addAction(search_act)
+            scale_menu = menu.addMenu("Размер Капри")
+            scale_actions = []
 
-            # галочка: появляется ли Капри сама время от времени (chatter)
-            chatter_act = QAction("Появляться самой", menu)
-            chatter_act.setCheckable(True)
-            chatter_act.toggled.connect(capri.set_chatter)
-            menu.addAction(chatter_act)
+            def set_avatar_scale(value):
+                value = max(0.50, min(1.0, float(value)))
+                avatar.set_scale(value)
+                capri.cfg["avatar_scale"] = value
+                save_setting("avatar_scale", value)
+                for action, option in scale_actions:
+                    action.blockSignals(True)
+                    action.setChecked(abs(option - value) < 0.01)
+                    action.blockSignals(False)
 
-            def sync_search(a=search_act, b=chatter_act):
-                capri.reload_config_if_changed(speak=False)  # могли поменять в config.json руками
-                for act, key, default in ((a, "search_when_unsure", True), (b, "chatter", True)):
-                    act.blockSignals(True)
-                    act.setChecked(bool(capri.cfg.get(key, default)))
-                    act.blockSignals(False)
-            menu.aboutToShow.connect(sync_search)
+            for scale, label in ((1.0, "100% — исходный"), (0.85, "85%"),
+                                 (0.70, "70%"), (0.55, "55%")):
+                scale_action = QAction(label, scale_menu)
+                scale_action.setCheckable(True)
+                scale_action.setChecked(abs(float(capri.cfg.get("avatar_scale", 1.0)) - scale) < 0.01)
+                scale_action.triggered.connect(lambda _checked=False, value=scale: set_avatar_scale(value))
+                scale_menu.addAction(scale_action)
+                scale_actions.append((scale_action, scale))
+
+            def sync_avatar_scale():
+                capri.reload_config_if_changed(speak=False)
+                current_scale = float(capri.cfg.get("avatar_scale", 1.0))
+                for action, option in scale_actions:
+                    action.blockSignals(True)
+                    action.setChecked(abs(option - current_scale) < 0.01)
+                    action.blockSignals(False)
+
+            scale_menu.aboutToShow.connect(sync_avatar_scale)
+
             continue
         act = QAction(title, menu)
         act.triggered.connect(fn)
         menu.addAction(act)
-
-    def sync_pin_action():
-        capri.reload_config_if_changed(speak=False)
-        pin_act.blockSignals(True)
-        pin_act.setChecked(bool(capri.cfg.get("pin_on_desktop", False)))
-        pin_act.blockSignals(False)
-
-    menu.aboutToShow.connect(sync_pin_action)
 
     tray = QSystemTrayIcon(tray_icon())
     tray.setToolTip("Капри — голосовой ассистент")
