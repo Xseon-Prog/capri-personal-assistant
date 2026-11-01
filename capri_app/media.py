@@ -105,7 +105,7 @@ def seek(seconds=None, delta=None):
 # ---------------- разбор времени ----------------
 
 def _num(text):
-    from actions import parse_number
+    from .actions import parse_number
     return parse_number(text)
 
 
@@ -177,7 +177,7 @@ def parse_time(text):
 
 def number_groups(t):
     """Отдельные числа в тексте: «три четырнадцать» → [3, 14], «двадцать пять» → [25], «3 14» → [3, 14]."""
-    from actions import NUM
+    from .actions import NUM
     out, tens = [], None
     for w in ordinals_to_cardinals(t).split():
         if w.isdigit():
@@ -278,8 +278,8 @@ def navigate(hwnd, url):
     """Открыть адрес в текущей вкладке браузера. Фокус ставится в адресную строку через UI Automation,
     и Enter нажимается только если там ровно нужный адрес — иначе ничего не жмём (чтобы буквы и цифры
     не ушли в страницу, где на YouTube это горячие клавиши)."""
-    from actions import send_keys
-    import automation
+    from .actions import send_keys
+    from . import automation
     try:
         el, vp = _urlbar(hwnd)
         if not el:
@@ -310,8 +310,8 @@ def navigate(hwnd, url):
 
 def youtube_url_seek(seconds):
     """Перематывает видео YouTube: открывает ту же ссылку, где метка времени t заменена на нужную."""
-    import automation
-    from actions import send_keys
+    from . import automation
+    from .actions import send_keys
     hwnd = automation.find_window(("youtube",))
     if not hwnd or not automation.focus(hwnd):
         return False

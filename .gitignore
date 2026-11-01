@@ -1,67 +1,34 @@
-# личные настройки (создаются при первом запуске из настроек по умолчанию в main.py)
+# Local configuration and secrets
 config.json
+config.json.*
+.env
+.env.*
 
-# скачиваемая модель распознавания речи — ставится через setup.bat
-models/
-
-# журнал, отчёты диагностики, образцы голоса — личные данные
+# Runtime data and personal information
 capri.log
-reports/
-samples/
-
-# служебное
-__pycache__/
-*.pyc
-*.tmp
-
-# Local settings and secrets
-config.json
-config.json.*
-.env
-.env.*
-
-# Personal logs and data
 *.log
 reports/
 samples/
-*.sqlite
-*.sqlite3
-*.db
-memory.sqlite*
-
-# Models, caches and virtual environments
-models/
-__pycache__/
-*.py[cod]
-*.tmp
-.venv/
-venv/
-
-# Local backups created during development
-backup_*/
-backup_*.py
-backups/
-
-
-# Local user data and development backups
-backup_*/
-backups/
-config.json
-config.json.*
-.env
-.env.*
-*.log
-reports/
-samples/
-*.sqlite
-*.sqlite3
-*.db
-memory.sqlite*
-models/
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-
-# Local provider usage statistics (never commit)
 usage.jsonl
+*.sqlite
+*.sqlite3
+*.db
+memory.sqlite*
+
+# Downloaded models and local environments
+models/
+.venv/
+venv/
+
+# Python caches and temporary files
+__pycache__/
+*.py[cod]
+*.tmp
+.pytest_cache/
+
+# Local backups and generated release/build artifacts
+backup_*/
+backups/
+build/
+dist/
+capri.zip

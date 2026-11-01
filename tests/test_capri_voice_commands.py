@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from voice_controls import parse_voice_control
+from capri_app.voice_controls import parse_voice_control
 
 CASES = {
     "Капри, включи радио Найт-Сити": ("radio_start", None),

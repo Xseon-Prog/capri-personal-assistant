@@ -4,8 +4,8 @@ from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
-from entries_dialog import STYLE
-from voice import GATE_MAX
+from .entries_dialog import STYLE
+from .voice import GATE_MAX
 
 PINK, CYAN, GREEN, DIM = QColor(255, 34, 96), QColor(0, 240, 255), QColor(40, 255, 150), QColor(90, 60, 90)
 

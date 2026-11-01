@@ -49,9 +49,9 @@ class NightCityRadioWindow(QWidget):
         )
         self.music_dir.mkdir(parents=True, exist_ok=True)
         self.video_path = Path(video_path) if video_path else (
-            Path(__file__).resolve().parent / "media" / "night_city_radio.mp4"
+            Path(__file__).resolve().parent.parent / "media" / "radio" / "night_city_radio.mp4"
         )
-        self.icon_dir = Path(__file__).resolve().parent / "media" / "radio_icons"
+        self.icon_dir = Path(__file__).resolve().parent.parent / "media" / "radio" / "icons"
         # CAPRI_RADIO_REUSE_APP_ICON_V1_8: reuse the same icon as Capri's tray/application.
         if window_icon is not None:
             self.setWindowIcon(window_icon)

@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QButtonGroup, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton,
                                QVBoxLayout)
 
-from entries_dialog import STYLE
+from .entries_dialog import STYLE
 
 RADIO = "QRadioButton { color: #ffd2e1; } QRadioButton::indicator:checked { background: #ff2260; }"
 

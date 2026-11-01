@@ -10,8 +10,8 @@ import subprocess
 import time
 import urllib.request
 
-from persona import CHARACTER, SPEECH_RULES, user_context
-from memory import MemoryStore  # CAPRI_LOCAL_MEMORY_V1
+from .persona import CHARACTER, SPEECH_RULES, user_context
+from .memory import MemoryStore  # CAPRI_LOCAL_MEMORY_V1
 
 log = logging.getLogger("capri")
 URL = "http://127.0.0.1:11434"

@@ -3,7 +3,7 @@ import datetime
 import logging
 import os
 
-from persona import CHARACTER, SPEECH_RULES, user_context
+from .persona import CHARACTER, SPEECH_RULES, user_context
 
 log = logging.getLogger("capri")
 

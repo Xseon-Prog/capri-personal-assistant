@@ -16,11 +16,11 @@ import webbrowser
 from dataclasses import dataclass
 
 import psutil
-from memory import MemoryStore  # CAPRI_LOCAL_MEMORY_V1
+from .memory import MemoryStore  # CAPRI_LOCAL_MEMORY_V1
 
-import automation
-import media
-from persona import line
+from . import automation
+from . import media
+from .persona import line
 
 log = logging.getLogger("capri")
 NO_WINDOW = 0x08000000

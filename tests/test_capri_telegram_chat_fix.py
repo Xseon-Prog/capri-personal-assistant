@@ -31,10 +31,14 @@ for phrase, expected in CASES.items():
 # The main search implementation must never select an arbitrary Edit field: it checks
 # coordinates in the top-left chat sidebar after closing transient popovers.
 from pathlib import Path
-installer = Path(__file__).with_name("apply_capri_telegram_chat_fix_v1.py").read_text(encoding="utf-8")
-assert "send_keys([\"esc\"])" in installer
-assert "rel_y <= 0.30" in installer
-assert "send_keys([\"ctrl\", \"f\"])" in installer
+ROOT = Path(__file__).resolve().parents[1]
+automation_source = (ROOT / "capri_app" / "automation.py").read_text(encoding="utf-8-sig")
+actions_source = (ROOT / "capri_app" / "actions.py").read_text(encoding="utf-8-sig")
+assert "def _telegram_search_field(hwnd):" in automation_source
+assert 'send_keys(["esc"])' in automation_source
+assert "0.0 <= rel_y <= 0.30" in automation_source
+assert 'send_keys(["ctrl", "f"])' in automation_source
+assert "CAPRI_TELEGRAM_CHAT_FIX_V1" in actions_source
 def stem_name(word):
     if len(word) >= 5 or (len(word) == 4 and word.endswith(("е", "у", "ы", "и"))):
         import re

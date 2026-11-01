@@ -13,6 +13,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(BASE, "media")
+PREVIEWS = os.path.join(OUT, "previews")
 POSES = os.path.join(BASE, "assets", "poses")
 PINK, CYAN, GREEN, BG1, BG2 = (255, 34, 96), (0, 240, 255), (40, 255, 150), (10, 6, 18), (34, 8, 26)
 FONTS = r"C:\Windows\Fonts"
@@ -143,11 +144,12 @@ def wave_gif(dst):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    os.makedirs(PREVIEWS, exist_ok=True)
     card(1280, 420, 150, os.path.join(OUT, "banner.png"))
     card(1280, 640, 190, os.path.join(OUT, "social_preview.png"))
     if len(sys.argv) > 1:
-        walk_gif(sys.argv[1], os.path.join(OUT, "walk.gif"))
-    wave_gif(os.path.join(OUT, "wave.gif"))
+        walk_gif(sys.argv[1], os.path.join(PREVIEWS, "walk.gif"))
+    wave_gif(os.path.join(PREVIEWS, "wave.gif"))
 
 
 if __name__ == "__main__":

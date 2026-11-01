@@ -316,7 +316,7 @@ def parse_type(step):
 
 def focus_search(title):
     """Поставить курсор в поиск текущего окна: YouTube — «/», Telegram — Esc, браузер — адресная строка."""
-    from actions import send_keys
+    from .actions import send_keys
     t = title.lower()
     if "youtube" in t:
         send_keys(["esc"])
@@ -394,8 +394,8 @@ def set_clipboard(text):
 def paste_text(text):
     """Вставить текст через буфер обмена (Ctrl+V) и вернуть буферу прежнее содержимое.
     Надёжнее посимвольной печати в программах вроде Telegram, где отдельные символы могут потеряться."""
-    from actions import send_keys
-    from media import _clipboard_text
+    from .actions import send_keys
+    from .media import _clipboard_text
     old = _clipboard_text()
     if not set_clipboard(text):
         type_text(text, delay=0.05)
@@ -473,7 +473,7 @@ def telegram_open_chat(index=None, name=None):
     чатов и используем верхнее поле боковой панели. Если UI Automation не нашла
     его, Ctrl+F вызывает штатную команду Search Telegram.
     """
-    from actions import send_keys
+    from .actions import send_keys
 
     hwnd = wait_and_focus(("telegram",), timeout=8)
     if not hwnd:
