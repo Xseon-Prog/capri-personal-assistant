@@ -1052,6 +1052,95 @@ class Actions:
             (r"скриншот|скрин экрана|сделай скрин", self.screenshot),
         ]
 
+    def handle_screen_command(self, c):
+        """Handle explicit OCR requests before the general chain parser splits conjunctions."""
+        from .screen_vision import classify_screen_command
+        task = classify_screen_command(c)
+        if task == "summary":
+            return self.summarize_screen()
+        if task == "save_exit":
+            return self.save_then_exit(c)
+        return None
+
+    def summarize_screen(self):
+        from .screen_vision import read_active_window
+        if not self.local:
+            return Reply("Для пересказа экрана включи локальный ИИ и Ollama в настройках Капри.")
+        try:
+            screen = read_active_window()
+        except Exception as e:
+            log.info("Не удалось прочитать активное окно: %s", e)
+            return Reply(f"Не удалось прочитать экран: {e}")
+        if not screen.text.strip():
+            return Reply("На активном окне не удалось распознать текст.")
+        summary = self.local.summarize_screen(screen.text)
+        if not summary:
+            return Reply("Не удалось подготовить пересказ. Проверь, что Ollama и локальная модель запущены.")
+        return Reply(summary, "answer")
+
+    def save_then_exit(self, c):
+        """Save by an exact OCR label, require visible save confirmation, then request exit."""
+        from .screen_vision import click_text_line, find_text_line, is_new_save_confirmation, read_active_window
+        key_match = re.search(
+            r"\b(?:нажми|нажать|press)\s+(?:клавишу\s+)?(?P<keys>.+?)\s+(?:и\s+)?(?:найди|отыщи|поищи)\b",
+            c,
+        )
+        if key_match:
+            keys, unknown = parse_keys(key_match.group("keys"))
+            if unknown or not keys:
+                return Reply(f"Не поняла клавишу перед поиском: {unknown or key_match.group('keys')}.")
+            send_keys(keys)
+            time.sleep(0.25)
+
+        try:
+            screen = read_active_window()
+        except Exception as e:
+            log.info("Не удалось прочитать окно перед сохранением: %s", e)
+            return Reply(f"Не удалось прочитать активное окно: {e}")
+        save_line = find_text_line(screen.lines, ("сохранить игру", "save game"))
+        if save_line is None:
+            return Reply("Не нашла единственную надпись «Сохранить игру» или «Save Game»; ничего не нажимала.")
+        if not click_text_line(screen, save_line):
+            return Reply("Окно изменилось или надпись закрыта другим окном; сохранение не нажимала.")
+
+        confirmed_screen = None
+        for _ in range(14):
+            time.sleep(0.75)
+            try:
+                current = read_active_window(expected_pid=screen.pid)
+            except Exception as e:
+                log.info("Проверка сохранения остановлена: %s", e)
+                return Reply("После нажатия окно изменилось; не удалось проверить сохранение, поэтому не закрывала игру.")
+            if is_new_save_confirmation(screen.text, current.text):
+                confirmed_screen = current
+                break
+        if confirmed_screen is None:
+            return Reply("Нажала «Сохранить игру», но не увидела подтверждения сохранения за 10 секунд. Игру не закрывала.")
+
+        exit_line = find_text_line(
+            confirmed_screen.lines,
+            ("выйти из игры", "выйти", "выход", "exit game", "exit", "quit"),
+        )
+        if exit_line is not None:
+            if not click_text_line(confirmed_screen, exit_line):
+                return Reply("Сохранение подтверждено, но окно изменилось; команду выхода не нажимала.")
+            exit_description = "нажала распознанную кнопку выхода"
+        else:
+            if automation.target_window() != confirmed_screen.hwnd:
+                return Reply("Сохранение подтверждено, но активное окно изменилось; игру не закрывала.")
+            if not automation.is_foreground(confirmed_screen.hwnd) and not automation.focus(confirmed_screen.hwnd):
+                return Reply("Сохранение подтверждено, но не удалось вернуть фокус игре; её не закрывала.")
+            send_keys(["alt", "f4"])
+            exit_description = "отправила Alt+F4"
+
+        time.sleep(0.7)
+        if ctypes.windll.user32.IsWindow(confirmed_screen.hwnd):
+            return Reply(
+                f"Сохранение подтверждено, {exit_description}, но окно осталось открытым. "
+                "Возможно, игра просит дополнительное подтверждение; его я не нажимала."
+            )
+        return Reply("Сохранение подтверждено; окно игры закрыто.")
+
     def handle(self, cmd):
         c = norm(cmd)
         cancel_ensure()  # новая команда — старая проверка «заиграло ли видео» больше не нужна
@@ -1081,6 +1170,9 @@ class Actions:
             return custom
         # «запомни … как X и Y» — название целиком, не цепочка команд
         whole = any(re.match(p, c) for p in (REMEMBER_RE, FORGET_RE, REPLY_RE, FORGET_REPLY_RE))
+        screen_reply = self.handle_screen_command(c)
+        if screen_reply is not None:
+            return screen_reply
         steps = None if whole else automation.split_chain(c)
         if steps:
             try:
