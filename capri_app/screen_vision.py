@@ -104,6 +104,7 @@ def is_new_save_confirmation(previous_text: str, current_text: str) -> bool:
 
 async def _recognize(image) -> tuple[ScreenLine, ...]:
     try:
+        from PIL import Image
         from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
         from winrt.windows.media.ocr import OcrEngine
         from winrt.windows.storage.streams import DataWriter
@@ -112,11 +113,14 @@ async def _recognize(image) -> tuple[ScreenLine, ...]:
             "Компоненты Windows OCR не установлены. Запусти setup.bat, затем проверь зависимости."
         ) from exc
 
-    writer = DataWriter()
-    writer.write_bytes(list(image.tobytes()))
-    bitmap = SoftwareBitmap(BitmapPixelFormat.RGBA8, image.width, image.height)
-    bitmap.copy_from_buffer(writer.detach_buffer())
+    red, green, blue, alpha = image.split()
+    bgra = Image.merge("RGBA", (blue, green, red, alpha))
+    bitmap = None
     try:
+        writer = DataWriter()
+        writer.write_bytes(list(bgra.tobytes()))
+        bitmap = SoftwareBitmap(BitmapPixelFormat.BGRA8, image.width, image.height)
+        bitmap.copy_from_buffer(writer.detach_buffer())
         engine = OcrEngine.try_create_from_user_profile_languages()
         if engine is None:
             raise ScreenReadError(
@@ -132,7 +136,11 @@ async def _recognize(image) -> tuple[ScreenLine, ...]:
             lines.append(ScreenLine(text, float(rect.x), float(rect.y), float(rect.width), float(rect.height)))
         return tuple(lines)
     finally:
-        bitmap.close()
+        if bitmap is not None:
+            bitmap.close()
+        bgra.close()
+        for channel in (red, green, blue, alpha):
+            channel.close()
 
 
 def read_active_window(expected_pid: int | None = None) -> ScreenRead:
